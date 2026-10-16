@@ -42,3 +42,26 @@ def get_gaussian_kernel(size=5, sigma=1.0):
     if k_sum > 0:
         k = k / k_sum
     return k
+
+def compute_image_gradient(img):
+    """
+    Tính đạo hàm không gian gx, gy và hướng gradient theta_g in [0, pi)
+    dùng toán tử Sobel và hàm convolve2d tự viết (Phần A), theo công thức (14):
+    theta_g = atan2(gy, gx) mod pi.
+    """
+    img_f = np.asarray(img, dtype=np.float64)
+    # Nhân Sobel chuẩn
+    Kx = np.array([[-1, 0, 1],
+                   [-2, 0, 2],
+                   [-1, 0, 1]], dtype=np.float64)
+    Ky = np.array([[-1, -2, -1],
+                   [ 0,  0,  0],
+                   [ 1,  2,  1]], dtype=np.float64)
+    
+    gx = convolve2d(img_f, Kx)
+    gy = convolve2d(img_f, Ky)
+    
+    mag = np.hypot(gx, gy)
+    # theta_g in [0, pi)
+    grad_dir = np.mod(np.arctan2(gy, gx), np.pi)
+    return mag, grad_dir
