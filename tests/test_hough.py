@@ -34,7 +34,7 @@ class TestMultiscaleHough(unittest.TestCase):
                 
         lines_05 = hough_multiscale(edges_05, n_levels=2, refine_factor=8, n_peaks=1)
         self.assertGreater(len(lines_05), 0)
-        rho_est1, theta_est1, _ = lines_05[0]
+        rho_est1, theta_est1 = lines_05[0]
         # Chênh lệch góc mod pi phải nhỏ hơn 1 độ (độ phân giải thô là 1 độ)
         diff_t1 = abs(theta_est1 - th_05)
         if diff_t1 > np.pi / 2.0:
@@ -52,7 +52,7 @@ class TestMultiscaleHough(unittest.TestCase):
                 
         lines_1795 = hough_multiscale(edges_1795, n_levels=2, refine_factor=8, n_peaks=1)
         self.assertGreater(len(lines_1795), 0)
-        rho_est2, theta_est2, _ = lines_1795[0]
+        rho_est2, theta_est2 = lines_1795[0]
         diff_t2 = abs(theta_est2 - th_1795)
         if diff_t2 > np.pi / 2.0:
             diff_t2 = np.pi - diff_t2

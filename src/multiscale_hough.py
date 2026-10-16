@@ -41,20 +41,8 @@ def hough_accumulate(edges, theta_range, rho_range, n_theta, n_rho,
                      grad_dir=None, delta_deg=None):
     """
     Bỏ phiếu vào mảng tích lũy. Nếu grad_dir khác None, chỉ bỏ phiếu
-    trong dải +/- delta_deg quanh hướng gradient (Mục 4.4 trong đề tài).
-    
-    edges: ảnh nhị phân biên (H, W), giá trị > 0 là điểm biên.
-    theta_range: tuple (theta_min, theta_max) tính bằng radian.
-    rho_range: tuple (rho_min, rho_max) tính bằng pixel.
-    n_theta: số lượng bin góc theta.
-    n_rho: số lượng bin khoảng cách rho.
-    grad_dir: mảng (H, W) góc gradient (radian) trong khoảng [0, pi) nếu có.
-    delta_deg: góc dung sai (độ) quanh hướng gradient.
-    
-    Trả về: (A, thetas, rhos)
-    A: mảng tích lũy (n_rho, n_theta) kiểu int32
-    thetas: mảng 1D các giá trị theta tương ứng
-    rhos: mảng 1D các giá trị rho tương ứng
+    trong dải +/- delta_deg quanh hướng gradient.
+    Trả về (A, thetas, rhos).
     """
     edges = np.asarray(edges)
     thetas = np.linspace(theta_range[0], theta_range[1], n_theta, endpoint=False)
@@ -75,8 +63,7 @@ def hough_accumulate(edges, theta_range, rho_range, n_theta, n_rho,
     sin_t = np.sin(thetas)
     
     if grad_dir is None or delta_deg is None:
-        # Bỏ phiếu chuẩn tắc cho mọi góc theta
-        # Vector hóa: tính rho cho toàn bộ điểm biên tại từng cột theta để tối ưu tốc độ bằng numpy
+        # Bỏ phiếu chuẩn tắc cho mọi góc theta (vector hóa theo góc bằng numpy)
         for j in range(n_theta):
             rho_vals = x_idxs * cos_t[j] + y_idxs * sin_t[j]
             r_idx = np.round((rho_vals - rho_range[0]) / d_rho).astype(np.int32)
@@ -84,13 +71,13 @@ def hough_accumulate(edges, theta_range, rho_range, n_theta, n_rho,
             if np.any(valid):
                 A[:, j] += np.bincount(r_idx[valid], minlength=n_rho)
     else:
-        # Bỏ phiếu giới hạn theo hướng gradient (Mục 4.4): theta in [theta_g - delta, theta_g + delta]
+        # Bỏ phiếu theo hướng gradient: theta in [theta_g - delta, theta_g + delta]
         delta_rad = np.radians(delta_deg)
         pts_grad = grad_dir[y_idxs, x_idxs]  # Hướng gradient theta_g của từng điểm biên
         
         for j in range(n_theta):
             th = thetas[j]
-            # Khoảng cách góc ngắn nhất có xét tính tuần hoàn mod pi
+            # Khoảng cách góc ngắn nhất mod pi
             diff = np.abs((th - pts_grad + np.pi / 2.0) % np.pi - np.pi / 2.0)
             mask = diff <= delta_rad
             if np.any(mask):
@@ -107,13 +94,10 @@ def find_peaks(A, n_peaks, nms_radius=3, smooth_sigma=1.0, thetas=None, rhos=Non
     """
     Làm mượt A bằng hàm tích chập của chính nhóm, triệt phi cực đại,
     trả về danh sách (rho, theta, votes) sắp giảm dần.
-    
-    Nếu thetas và rhos được truyền vào, trả về giá trị thực (rho, theta, votes).
-    Nếu không, trả về danh sách chỉ số ô (rho_idx, theta_idx, votes).
     """
-    # 1. Làm mượt mảng tích lũy bằng nhân Gauss với tích chập tự viết (Mục 4.5)
+    # 1. Làm mượt mảng tích lũy bằng nhân Gauss với tích chập tự viết
     if smooth_sigma > 0:
-        kernel_size = int(round(smooth_sigma * 4)) | 1  # Đảm bảo kích thước lẻ
+        kernel_size = int(round(smooth_sigma * 4)) | 1  # kích thước lẻ
         kernel = get_gaussian_kernel(size=kernel_size, sigma=smooth_sigma)
         A_smooth = convolve2d(A, kernel)
     else:
@@ -124,43 +108,32 @@ def find_peaks(A, n_peaks, nms_radius=3, smooth_sigma=1.0, thetas=None, rhos=Non
     candidates = []
     
     # 2. Triệt phi cực đại (NMS) cục bộ
-    for ri in range(n_rho):
+    # Chỉ xét các bin có giá trị > 0 để tối ưu tốc độ duyệt
+    ris, tis = np.where(A_smooth > 0)
+    for ri, ti in zip(ris, tis):
+        val = A_smooth[ri, ti]
         r_start = max(0, ri - r)
         r_end = min(n_rho, ri + r + 1)
-        for ti in range(n_theta):
-            val = A_smooth[ri, ti]
-            if val <= 0:
-                continue
-            t_start = max(0, ti - r)
-            t_end = min(n_theta, ti + r + 1)
-            
-            patch = A_smooth[r_start:r_end, t_start:t_end]
-            if val == np.max(patch):
-                candidates.append((ri, ti, int(A[ri, ti]), val))
+        t_start = max(0, ti - r)
+        t_end = min(n_theta, ti + r + 1)
+        
+        patch = A_smooth[r_start:r_end, t_start:t_end]
+        if val == np.max(patch):
+            candidates.append((ri, ti, int(A[ri, ti]), val))
                 
-    # Sắp xếp theo số phiếu giảm dần (ưu tiên giá trị làm mượt)
+    # Sắp xếp giảm dần theo số phiếu
     candidates.sort(key=lambda item: item[3], reverse=True)
     selected = candidates[:n_peaks]
     
-    # 3. Trả về kết quả
+    # 3. Trả về kết quả: nếu có thetas, rhos thì quy đổi sang giá trị thực
     if thetas is not None and rhos is not None:
         return [(float(rhos[ri]), float(thetas[ti]), votes) for ri, ti, votes, _ in selected]
     return [(ri, ti, votes) for ri, ti, votes, _ in selected]
 
 
-def hough_multiscale(edges, grad_dir=None, delta_deg=10.0, n_levels=2,
-                     refine_factor=8, n_peaks=5):
+def hough_multiscale(edges, grad_dir=None, n_levels=2, refine_factor=8, n_peaks=5, delta_deg=10.0):
     """
-    Hough thô-đến-mịn (Coarse-to-fine) theo Mục 4.3 trong đề tài:
-    1. Dựng mảng tích lũy thô (Delta_theta0 = 1 độ, Delta_rho0 = 2 px).
-    2. Tìm K đỉnh ứng viên trong mảng thô (lọc trùng lặp qua biên 0 và pi).
-    3. Với mỗi ứng viên (rho*, theta*), dựng lại mảng tích lũy nhỏ và mịn
-       chỉ phủ lân cận [rho* +/- Delta_rho0, theta* +/- Delta_theta0],
-       với bước chia nhỏ đi r lần (ví dụ r = 8).
-       Chỉ những điểm biên đã bỏ phiếu cho ô thô mới tham gia bỏ phiếu lại.
-    4. Lặp thêm 1-2 tầng nếu cần. Xử lý đúng bẫy quấn vòng ở theta = 0 và theta = pi.
-    
-    Trả về danh sách (rho, theta, votes) đã tinh chỉnh.
+    Hough thô-đến-mịn. Trả về danh sách (rho, theta) đã tinh chỉnh.
     """
     edges = np.asarray(edges)
     h, w = edges.shape
@@ -177,11 +150,10 @@ def hough_multiscale(edges, grad_dir=None, delta_deg=10.0, n_levels=2,
         grad_dir=grad_dir, delta_deg=delta_deg
     )
     
-    # Bước 2: Tìm các đỉnh trong mảng thô
-    # Tìm nhiều ứng viên hơn để lọc bỏ các đỉnh ảo do quấn vòng quanh biên 0 và pi
+    # Bước 2: Tìm các đỉnh ứng viên trong mảng thô
     raw_peaks = find_peaks(A_coarse, n_peaks=n_peaks * 3, nms_radius=3, smooth_sigma=1.0)
     
-    # Lọc bỏ các đỉnh trùng lặp hình học (kể cả quấn vòng mod pi đổi dấu rho)
+    # Lọc bỏ các đỉnh trùng lặp hình học qua biên 0 và pi
     unique_coarse_peaks = []
     for r_idx, t_idx, votes in raw_peaks:
         rh = rhos_c[r_idx]
@@ -204,9 +176,8 @@ def hough_multiscale(edges, grad_dir=None, delta_deg=10.0, n_levels=2,
         
         step_theta = d_theta0
         step_rho = d_rho0
-        best_votes = c_votes
         
-        # Lọc: "Chỉ những điểm biên đã bỏ phiếu cho ô thô mới tham gia bỏ phiếu lại"
+        # Chỉ những điểm biên đã bỏ phiếu cho ô thô mới tham gia bỏ phiếu lại
         rhos_cand = x_all * np.cos(curr_theta) + y_all * np.sin(curr_theta)
         cand_mask = np.abs(rhos_cand - curr_rho) <= (step_rho * 1.5)
         if grad_dir is not None and delta_deg is not None:
@@ -219,7 +190,7 @@ def hough_multiscale(edges, grad_dir=None, delta_deg=10.0, n_levels=2,
         
         if len(cand_x) == 0:
             final_th, final_rh = wrap_theta_rho(curr_theta, curr_rho)
-            refined_lines.append((final_rh, final_th, c_votes))
+            refined_lines.append((final_rh, final_th))
             continue
             
         # Lặp các tầng tinh chỉnh thô-đến-mịn
@@ -251,14 +222,13 @@ def hough_multiscale(edges, grad_dir=None, delta_deg=10.0, n_levels=2,
             best_r_idx, best_t_idx = np.unravel_index(np.argmax(sub_A), sub_A.shape)
             curr_rho = sub_rhos[best_r_idx]
             curr_theta = sub_thetas[best_t_idx]
-            best_votes = int(sub_A[best_r_idx, best_t_idx])
             
             # Thu hẹp bước cho tầng tiếp theo
             step_theta /= refine_factor
             step_rho /= refine_factor
             
-        # BẪY QUẤN VÒNG: Chuẩn hóa theta về [0, pi) và đổi dấu rho nếu theta vượt qua 0 hoặc pi
+        # Bẫy quấn vòng: Chuẩn hóa theta về [0, pi) và đổi dấu rho nếu vượt qua 0 hoặc pi
         final_theta, final_rho = wrap_theta_rho(curr_theta, curr_rho)
-        refined_lines.append((final_rho, final_theta, best_votes))
+        refined_lines.append((final_rho, final_theta))
         
     return refined_lines
