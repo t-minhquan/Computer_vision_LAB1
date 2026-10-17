@@ -40,15 +40,13 @@ def clip_histogram(hist, clip_limit):
     return clipped
 
 
-def build_tile_luts(img, grid=(8, 8), alpha=40, s_max=4):
+def build_tile_luts(img, grid=(8, 8), clip_limit=2.0):
     """
     Xây dựng LUT cho từng ô theo công thức trong tài liệu.
 
     img: ảnh xám uint8, kích thước (H, W).
     grid: (Gy, Gx), số ô theo chiều dọc và ngang.
-    alpha: hệ số điều chỉnh, thuộc [0, 100].
-    s_max: giới hạn ngưỡng cắt so với chiều cao trung bình
-           của histogram, s_max >= 1.
+    clip_limit: giới hạn ngưỡng cắt so với chiều cao trung bình của histogram.
 
     Trả về LUT có kích thước (Gy, Gx, 256).
     """
@@ -67,11 +65,8 @@ def build_tile_luts(img, grid=(8, 8), alpha=40, s_max=4):
     if not (1 <= Gy <= H and 1 <= Gx <= W):
         raise ValueError("Số ô phải nằm trong giới hạn kích thước ảnh.")
 
-    if not (0 <= alpha <= 100):
-        raise ValueError("alpha phải nằm trong [0, 100].")
-
-    if s_max < 1:
-        raise ValueError("s_max phải lớn hơn hoặc bằng 1.")
+    if clip_limit < 1.0:
+        raise ValueError("clip_limit phải lớn hơn hoặc bằng 1.0")
 
     tile_h = H / Gy
     tile_w = W / Gx
@@ -101,17 +96,14 @@ def build_tile_luts(img, grid=(8, 8), alpha=40, s_max=4):
             # Chiều cao trung bình của một bin.
             avg_height = n_tile / L
 
-            # beta = (N_tile / L) *
-            #        [1 + alpha/100 * (s_max - 1)]
-            beta = avg_height * (
-                1.0 + (alpha / 100.0) * (s_max - 1.0)
-            )
+            # Tính beta trực tiếp từ clip_limit
+            beta = avg_height * clip_limit
 
             # Ngưỡng cắt nguyên.
-            clip_limit = max(1, int(np.floor(beta)))
+            clip_limit_int = max(1, int(np.floor(beta)))
 
             # Cắt histogram và phân phối lại phần dư.
-            clipped_hist = clip_histogram(hist, clip_limit)
+            clipped_hist = clip_histogram(hist, clip_limit_int)
 
             # CDF và LUT.
             cdf = np.cumsum(clipped_hist, dtype=np.int64)
@@ -127,14 +119,13 @@ def build_tile_luts(img, grid=(8, 8), alpha=40, s_max=4):
     return luts
 
 
-def clahe(img, grid=(8, 8), alpha=40, s_max=4):
+def clahe(img, grid=(8, 8), clip_limit=2.0):
     """
     CLAHE với nội suy song tuyến giữa bốn LUT lân cận.
 
     img: ảnh xám uint8 có kích thước (H, W).
     grid: (Gy, Gx).
-    alpha: hệ số điều chỉnh thuộc [0, 100].
-    s_max: giới hạn ngưỡng cắt.
+    clip_limit: giới hạn ngưỡng cắt.
 
     Trả về ảnh uint8 có cùng kích thước.
     """
@@ -148,7 +139,7 @@ def clahe(img, grid=(8, 8), alpha=40, s_max=4):
 
     # 1. Tạo LUT cho từng ô.
     luts = build_tile_luts(
-        img, grid=grid, alpha=alpha, s_max=s_max
+        img, grid=grid, clip_limit=clip_limit
     )
 
     tile_h = H / Gy
@@ -197,4 +188,3 @@ def clahe(img, grid=(8, 8), alpha=40, s_max=4):
     return np.clip(
         np.round(result), 0, 255
     ).astype(np.uint8)
-
