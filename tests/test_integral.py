@@ -1,5 +1,9 @@
 """Kiểm thử Kỹ thuật 2 - Computer_Vision 40.pdf, mục 3.5.
 
+Chạy trong thư mục chứa file này:
+    python -m unittest -v test_ky_thuat_2.py
+
+Chỉ dùng unittest (thư viện chuẩn) và numpy; không dùng hàm xử lý ảnh bị cấm.
 """
 
 import unittest
@@ -7,7 +11,7 @@ import numpy as np
 
 from ky_thuat_2 import (
     integral_image, box_sum, local_mean_std, adaptive_threshold,
-    local_mean_direct, local_mean_separable, local_mean_integral,
+    local_mean_direct, local_mean_separable, local_mean_integral, otsu_manual,
 )
 
 
@@ -161,6 +165,57 @@ class TestBaCachTinhMean(unittest.TestCase):
                 ref, _ = mean_std_reference(img, radius)
                 for func in (local_mean_direct, local_mean_separable, local_mean_integral):
                     np.testing.assert_allclose(func(img, radius), ref, atol=1e-10)
+
+
+class TestKiemThuMoRong(unittest.TestCase):
+    def test_anh_mot_hang_mot_cot_va_radius_lon(self):
+        """Doi chieu tren anh 1x9 va 9x1, de phat hien nham truc/hang/cot."""
+        rng = np.random.default_rng(20261017)
+        for shape in [(1, 9), (9, 1), (2, 7), (7, 2)]:
+            img = rng.integers(0, 256, size=shape, dtype=np.uint8)
+            for radius in [0, 1, 3, 20]:
+                with self.subTest(shape=shape, radius=radius):
+                    exp_m, exp_s = mean_std_reference(img, radius)
+                    got_m, got_s = local_mean_std(img, radius)
+                    np.testing.assert_allclose(got_m, exp_m, atol=1e-10)
+                    np.testing.assert_allclose(got_s, exp_s, atol=1e-9)
+
+    def test_ngau_nhien_bradley_va_sauvola(self):
+        """So sanh dau ra nhi phan voi cong thuc thu cong tren nhieu anh."""
+        rng = np.random.default_rng(40)
+        for shape in [(3, 5), (6, 9), (12, 7)]:
+            for _ in range(4):
+                img = rng.integers(0, 256, size=shape, dtype=np.uint8)
+                for r in [0, 1, 4, 20]:
+                    m, s = mean_std_reference(img, r)
+                    for t in [0.05, 0.15, 0.25]:
+                        expected = np.where(img < m*(1-t), 0, 255).astype(np.uint8)
+                        np.testing.assert_array_equal(adaptive_threshold(img, r, t=t), expected)
+                    for k in [0.2, 0.34, 0.5]:
+                        expected = np.where(img < m*(1 + k*(s/128-1)), 0, 255).astype(np.uint8)
+                        np.testing.assert_array_equal(adaptive_threshold(img, r, 'sauvola', k=k), expected)
+
+    def test_otsu_duoc_tinh_dung_bang_kiem_tra_doc_lap(self):
+        """So nguong Otsu voi viec duyet tat ca cac nguong thu cong."""
+        img = np.array([5]*7 + [20]*8 + [55]*9 + [105]*12 + [188]*19 + [240]*17,
+                       dtype=np.uint8).reshape(8, 9)
+        optimal = []
+        for t in range(255):
+            lo = img[img <= t].astype(float)
+            hi = img[img > t].astype(float)
+            if len(lo) == 0 or len(hi) == 0:
+                optimal.append(0.)
+            else:
+                fraction = len(lo) / img.size
+                optimal.append(fraction * (1-fraction) * (lo.mean()-hi.mean())**2)
+        self.assertEqual(otsu_manual(img), int(np.argmax(optimal)))
+
+    def test_ba_cach_mean_khi_cua_so_nho_hon_anh(self):
+        """Benchmark khong phai la 'dung' neu ba ket qua so sai nhau."""
+        img = np.random.default_rng(17).integers(0, 256, (135, 151), dtype=np.uint8)
+        expected = local_mean_integral(img, 64)
+        np.testing.assert_allclose(local_mean_direct(img, 64), expected, atol=1e-10)
+        np.testing.assert_allclose(local_mean_separable(img, 64), expected, atol=1e-10)
 
 
 if __name__ == '__main__':

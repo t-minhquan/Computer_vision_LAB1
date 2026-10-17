@@ -324,7 +324,8 @@ def local_mean_integral(img, radius):
 
 
 def experiment_c():
-    test_img, _ = make_scene(h=64,w=64, seed=88)
+    # 160x160: cua so lon nhat 129x129 van nam trong kich thuoc anh.
+    test_img, _ = make_scene(h=160,w=160, seed=88)
     radii = [1,2,4,8,16,32,64]
     funcs = [local_mean_direct, local_mean_separable, local_mean_integral]
     labels = ['Truc tiep O(r^2)', 'Tach duoc O(r)', 'Anh tich phan O(1)']
