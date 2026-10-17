@@ -197,3 +197,4 @@ def clahe(img, grid=(8, 8), alpha=40, s_max=4):
     return np.clip(
         np.round(result), 0, 255
     ).astype(np.uint8)
+
