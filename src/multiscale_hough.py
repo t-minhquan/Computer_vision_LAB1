@@ -71,21 +71,27 @@ def hough_accumulate(edges, theta_range, rho_range, n_theta, n_rho,
             if np.any(valid):
                 A[:, j] += np.bincount(r_idx[valid], minlength=n_rho)
     else:
-        # Bỏ phiếu theo hướng gradient: theta in [theta_g - delta, theta_g + delta]
+        # Bỏ phiếu theo hướng gradient: chỉ bỏ phiếu trong dải +/- delta_deg quanh hướng gradient
         delta_rad = np.radians(delta_deg)
-        pts_grad = grad_dir[y_idxs, x_idxs]  # Hướng gradient theta_g của từng điểm biên
+        pts_grad = grad_dir[y_idxs, x_idxs] % np.pi
         
-        for j in range(n_theta):
-            th = thetas[j]
-            # Khoảng cách góc ngắn nhất mod pi
-            diff = np.abs((th - pts_grad + np.pi / 2.0) % np.pi - np.pi / 2.0)
-            mask = diff <= delta_rad
-            if np.any(mask):
-                rho_vals = x_idxs[mask] * cos_t[j] + y_idxs[mask] * sin_t[j]
-                r_idx = np.round((rho_vals - rho_range[0]) / d_rho).astype(np.int32)
-                valid = (r_idx >= 0) & (r_idx < n_rho)
-                if np.any(valid):
-                    A[:, j] += np.bincount(r_idx[valid], minlength=n_rho)
+        # Số bước góc tương ứng với delta_rad
+        K = int(np.round(delta_rad / d_theta))
+        base_t_idx = np.round((pts_grad - thetas[0]) / d_theta).astype(np.int32)
+        
+        all_flat = []
+        for k in range(-K, K + 1):
+            t_idx = (base_t_idx + k) % n_theta
+            rho_vals = x_idxs * cos_t[t_idx] + y_idxs * sin_t[t_idx]
+            r_idx = np.round((rho_vals - rho_range[0]) / d_rho).astype(np.int32)
+            valid = (r_idx >= 0) & (r_idx < n_rho)
+            if np.any(valid):
+                all_flat.append(r_idx[valid] * n_theta + t_idx[valid])
+                
+        if all_flat:
+            flat_idx = np.concatenate(all_flat)
+            counts = np.bincount(flat_idx, minlength=n_rho * n_theta)
+            A += counts.reshape(n_rho, n_theta)
                     
     return A, thetas, rhos
 
@@ -131,7 +137,8 @@ def find_peaks(A, n_peaks, nms_radius=3, smooth_sigma=1.0, thetas=None, rhos=Non
     return [(ri, ti, votes) for ri, ti, votes, _ in selected]
 
 
-def hough_multiscale(edges, grad_dir=None, n_levels=2, refine_factor=8, n_peaks=5, delta_deg=10.0):
+def hough_multiscale(edges, grad_dir=None, n_levels=2, refine_factor=8, n_peaks=5,
+                     delta_deg=10.0, nms_radius=3, d_theta_coarse=1.0, d_rho_coarse=2.0):
     """
     Hough thô-đến-mịn. Trả về danh sách (rho, theta) đã tinh chỉnh.
     """
@@ -140,8 +147,8 @@ def hough_multiscale(edges, grad_dir=None, n_levels=2, refine_factor=8, n_peaks=
     d_max = np.sqrt(h**2 + w**2)
     
     # Bước 1: Dựng mảng tích lũy thô
-    d_theta0 = np.radians(1.0)  # 1 độ
-    d_rho0 = 2.0               # 2 pixel
+    d_theta0 = np.radians(d_theta_coarse)
+    d_rho0 = float(d_rho_coarse)
     n_theta0 = int(np.pi / d_theta0)
     n_rho0 = int((2.0 * d_max) / d_rho0) + 1
     
@@ -151,7 +158,7 @@ def hough_multiscale(edges, grad_dir=None, n_levels=2, refine_factor=8, n_peaks=
     )
     
     # Bước 2: Tìm các đỉnh ứng viên trong mảng thô
-    raw_peaks = find_peaks(A_coarse, n_peaks=n_peaks * 3, nms_radius=3, smooth_sigma=1.0)
+    raw_peaks = find_peaks(A_coarse, n_peaks=n_peaks * 3, nms_radius=nms_radius, smooth_sigma=1.0)
     
     # Lọc bỏ các đỉnh trùng lặp hình học qua biên 0 và pi
     unique_coarse_peaks = []
@@ -198,10 +205,13 @@ def hough_multiscale(edges, grad_dir=None, n_levels=2, refine_factor=8, n_peaks=
             n_sub_theta = refine_factor * 2 + 1
             n_sub_rho = refine_factor * 2 + 1
             
-            min_th = curr_theta - step_theta
-            max_th = curr_theta + step_theta
-            min_rh = curr_rho - step_rho
-            max_rh = curr_rho + step_rho
+            win_th = step_theta * 1.5
+            win_rh = max(step_rho * 1.5, 1.2)
+            
+            min_th = curr_theta - win_th
+            max_th = curr_theta + win_th
+            min_rh = curr_rho - win_rh
+            max_rh = curr_rho + win_rh
             
             sub_thetas = np.linspace(min_th, max_th, n_sub_theta)
             sub_rhos = np.linspace(min_rh, max_rh, n_sub_rho)
@@ -218,8 +228,14 @@ def hough_multiscale(edges, grad_dir=None, n_levels=2, refine_factor=8, n_peaks=
                 if np.any(valid):
                     sub_A[:, ti] = np.bincount(r_bins[valid], minlength=n_sub_rho)
                     
+            # Làm mượt nhẹ bằng nhân Gauss thích nghi để triệt tiêu nhiễu lượng tử hóa pixel rời rạc
+            sigma_rho = max(0.6 / sub_d_rh, 1.0)
+            k_size = int(round(sigma_rho * 3)) | 1
+            kernel = get_gaussian_kernel(size=k_size, sigma=sigma_rho)
+            sub_A_smooth = convolve2d(sub_A, kernel)
+            
             # Tìm vị trí đỉnh trong mảng mịn
-            best_r_idx, best_t_idx = np.unravel_index(np.argmax(sub_A), sub_A.shape)
+            best_r_idx, best_t_idx = np.unravel_index(np.argmax(sub_A_smooth), sub_A.shape)
             curr_rho = sub_rhos[best_r_idx]
             curr_theta = sub_thetas[best_t_idx]
             
